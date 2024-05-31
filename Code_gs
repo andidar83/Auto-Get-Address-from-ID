@@ -1,0 +1,127 @@
+function pollJob(apiKey, redashUrl, job) {
+  // TODO: add timeout
+
+  var apiUrl = `${redashUrl}/api/jobs/${job.id}?api_key=${apiKey}`;
+  while (job.status !== 3 && job.status !== 4) {
+    
+    var response = UrlFetchApp.fetch(apiUrl);
+    job = JSON.parse(response.getContentText()).job;
+    Logger.log(job)
+    Utilities.sleep(1000); // Sleep for 1 second
+  }
+
+  if (job.status === 3) {
+    return job.query_result_id;
+  }
+
+  return null;
+}
+
+function postData(addressIds) {
+  var url = 'https://redash-id.ninjavan.co/api/queries/2168/results';
+  var apiKey = 'Poqwen8BjW4zjLHOzpmSlXDnm7TSrV5DzevDv6eD'; // Replace with your actual API key
+
+  var payload = {
+    max_age: 0,
+    parameters: {"address_id":addressIds} // Add your parameters if needed
+  };
+  
+  var options = {
+    method: 'post',
+    contentType: 'application/json',
+    payload: JSON.stringify(payload),
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': 'Key ' + apiKey // Include the API key in the Authorization header
+    }
+  };
+  
+  var response = UrlFetchApp.fetch(url, { ...options, muteHttpExceptions: true });
+  var content = response.getContentText();
+  var responseData = JSON.parse(content);
+  
+  Logger.log(responseData); // Log the response data
+  var job = responseData.job;
+  var queryResultId = pollJob(apiKey, 'https://redash-id.ninjavan.co', job);
+
+  if (queryResultId) {
+    var resultUrl = `https://redash-id.ninjavan.co/api/queries/2168/results/${queryResultId}.json?api_key=${apiKey}`;
+    var resultResponse = UrlFetchApp.fetch(resultUrl);
+    if (resultResponse.getResponseCode() !== 200) {
+      throw new Error('Failed getting results.');
+    }
+    var resultContent = resultResponse.getContentText();
+    var resultData = JSON.parse(resultContent);
+    var resultData = resultData.query_result.data.rows;
+
+
+  } else {
+    throw new Error('Query execution failed.');
+  }
+
+  
+  return resultData
+}
+
+
+
+function fetchAndConcatenateAddressIds() {
+  var sheetId = '1Katp2NxLz1Fa3LvWIi_GxDWuUEJF0D4erTzFNxLZChs';
+  var sheetName = 'id_fm_addresses';
+  
+  var sheet = SpreadsheetApp.openById(sheetId).getSheetByName(sheetName);
+  var data = sheet.getDataRange().getValues();
+  
+  var addressIds = [];
+  for (var i = 1; i < data.length; i++) { // Start from 1 to exclude the header
+    var addressId = data[i][0];
+    if (addressId) { // Check if addressId is not empty
+      addressIds.push(addressId);
+    }
+  }
+  
+  var resultString = addressIds.join(',');
+  
+  // Log the full addressIds string
+  
+  return resultString;
+}
+
+
+function writeDataToSheet(filteredData) {
+  var sheetId = '1Katp2NxLz1Fa3LvWIi_GxDWuUEJF0D4erTzFNxLZChs';
+  var sheetName = 'address information';
+  
+  var sheet = SpreadsheetApp.openById(sheetId).getSheetByName(sheetName);
+  sheet.getRange('A2:C').clear();
+  // Prepare data to write to the sheet
+  var values = filteredData.map(function(entry) {
+    return [entry.address_id, entry.address1, entry.global_id];
+  });
+  
+  // Write the data to the sheet starting from the second row
+  sheet.getRange(2, 1, values.length, 3).setValues(values);
+}
+
+
+
+
+
+function main(){
+  var addressIds = fetchAndConcatenateAddressIds();
+  Logger.log(addressIds)
+  var redash_data = postData(addressIds);
+
+  var filteredData = redash_data.map(function(entry) {
+    return {
+      "address_id": entry.address_id,
+      "address1": entry.address1,
+      "global_id": entry.global_shipper_id
+    };
+  });
+  Logger.log(filteredData);
+
+  writeDataToSheet(filteredData);
+
+}
+
